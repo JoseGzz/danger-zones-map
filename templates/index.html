@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Monterrey SafeMap</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <style>
+        body { 
+            margin: 0; padding: 0; 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f8fafc; color: #333;
+            height: 100vh; display: flex; flex-direction: column;
+        }
+        
+        /* Header */
+        .header {
+            background-color: #0f172a; color: white;
+            padding: 0 2rem; height: 60px;
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            flex-shrink: 0;
+        }
+        .header h1 { margin: 0; font-size: 1.2rem; font-weight: 700; letter-spacing: 0.5px; }
+        .status { font-size: 0.8rem; background: #22c55e; color: #0f172a; padding: 4px 12px; border-radius: 20px; font-weight: 600; }
+
+        /* Main Layout */
+        .main-container {
+            display: flex; 
+            flex-grow: 1;
+            overflow: hidden; /* Prevents double scrollbars */
+        }
+
+        /* Sidebar (Top 5 List) */
+        .sidebar {
+            width: 320px; background: white;
+            border-right: 1px solid #e2e8f0;
+            display: flex; flex-direction: column;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        .sidebar-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        .sidebar-header h2 { margin: 0; font-size: 1rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+        
+        .zone-list {
+            padding: 1rem;
+            overflow-y: auto;
+        }
+
+        .zone-card {
+            background: white; border: 1px solid #e2e8f0;
+            border-radius: 8px; padding: 15px; margin-bottom: 12px;
+            cursor: pointer; transition: all 0.2s ease;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .zone-card:hover {
+            border-color: #ef4444; background: #fef2f2;
+            transform: translateX(4px);
+        }
+        .zone-info strong { display: block; color: #0f172a; font-size: 0.95rem; }
+        .zone-info span { font-size: 0.8rem; color: #64748b; }
+        .zone-badge { 
+            background: #fee2e2; color: #ef4444; 
+            padding: 4px 8px; border-radius: 6px; 
+            font-weight: 700; font-size: 0.85rem;
+        }
+
+        /* Map Area */
+        .map-wrapper {
+            flex-grow: 1; position: relative;
+            background: #e2e8f0;
+        }
+        #map { 
+            height: 100%; width: 100%; 
+        }
+
+        /* Loading Overlay */
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.95); padding: 20px 40px;
+            border-radius: 12px; font-weight: 600; color: #1e293b;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+            z-index: 9999; text-align: center;
+            border: 1px solid #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>MONTERREY ALERT SYSTEM</h1>
+        <div class="status">LIVE</div>
+    </div>
+
+    <div class="main-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>High Risk Zones</h2>
+            </div>
+            <div id="zone-list" class="zone-list">
+                <!-- Javascript will populate this -->
+                <p style="color: #94a3b8; font-size: 0.9rem; text-align: center;">Waiting for data...</p>
+            </div>
+        </div>
+
+        <!-- Map -->
+        <div class="map-wrapper">
+            <div id="loading">Connecting to Databricks...</div>
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // 1. Setup Map
+        var map = L.map('map').setView([25.6866, -100.3161], 12);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        var markers = L.featureGroup(); // Group to hold all circles
+
+        // 2. Fetch Data
+        fetch('/api/danger-zones')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('loading').style.display = 'none';
+                
+                if (data.error) {
+                    alert("Data Error: " + data.error);
+                    return;
+                }
+                if (!data.points || data.points.length === 0) {
+                    alert("Connected to DB, but no danger zones found in the latest batch.");
+                    return;
+                }
+
+                // A. Draw Points on Map
+                data.points.forEach(p => {
+                    var circle = L.circle([p.center_lat, p.center_lon], {
+                        color: '#ef4444',       // Red border
+                        fillColor: '#ef4444',   // Red fill
+                        fillOpacity: 0.25,      // Transparent
+                        radius: 150,            // Big circle (meters)
+                        weight: 2,              // Border width
+                        stroke: true
+                    }).bindPopup('<b>Zone ID:</b> ' + p.zone_id);
+                    
+                    circle.addTo(markers);
+                });
+                
+                markers.addTo(map);
+                
+                // Auto-zoom to show all danger zones
+                if (markers.getLayers().length > 0) {
+                    map.fitBounds(markers.getBounds(), { padding: [50, 50] });
+                }
+
+                // B. Populate Sidebar (Top 5)
+                const listContainer = document.getElementById('zone-list');
+                listContainer.innerHTML = ''; 
+
+                data.top_zones.forEach(zone => {
+                    const div = document.createElement('div');
+                    div.className = 'zone-card';
+                    div.innerHTML = `
+                        <div class="zone-info">
+                            <strong>Danger Zone #${zone.zone_id}</strong>
+                            <span>Click to locate</span>
+                        </div>
+                        <div class="zone-badge">${zone.report_count}</div>
+                    `;
+                    
+                    // Click event: Fly to this zone
+                    div.onclick = () => {
+                        // Highlight the active card
+                        document.querySelectorAll('.zone-card').forEach(c => c.style.borderColor = '#e2e8f0');
+                        div.style.borderColor = '#ef4444';
+                        
+                        // Fly to map location
+                        map.flyTo([zone.center_lat, zone.center_lon], 16, {
+                            animate: true,
+                            duration: 1.5
+                        });
+                    };
+                    
+                    listContainer.appendChild(div);
+                });
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('loading').innerHTML = 'Connection Failed.<br><small>Check console for details.</small>';
+                document.getElementById('loading').style.color = 'red';
+            });
+    </script>
+</body>
+</html>
