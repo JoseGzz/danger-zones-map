@@ -1,3 +1,4 @@
 flask
 databricks-sql-connector
 pandas
+gunicorn
